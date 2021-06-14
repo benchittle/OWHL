@@ -120,7 +120,7 @@
 #define STARTMINUTE 0 // minute of hour to start taking data, 0 to 59
 #define DATADURATION 60 // # of minutes to collect data, 1 to 60
 
-#define SAMPLES_PER_SECOND 4// number of samples taken per second (4, 2, or 1)
+#define SAMPLES_PER_SECOND 1// number of samples taken per second (4, 2, or 1)
 
 
 const byte chipSelect = 10; // define the Chip Select pin for SD card
@@ -193,9 +193,8 @@ SdFile setfile; // for sd card, this is the settings file to read from
 //---------------------------------------------------------
 // SETUP loop
 void setup() {
-	
-	Serial.begin(57600);
 #ifdef ECHO_TO_SERIAL   
+  Serial.begin(57600);
   Serial.println(F("Hello"));
 #endif  
 	pinMode(chipSelect, OUTPUT);  // set chip select pin for SD card to output
@@ -229,10 +228,8 @@ void setup() {
 	// clock (follow the instructions in the comments of that sketch) and
 	// the sketch gettime.ino for reading out the clock time via serial 
 	// monitor. 
-	Wire.begin();
-	RTC.begin(); // Start DS3231 real time clock
 	// Check to see if DS3231 RTC is running
-	if (! RTC.isrunning()) {
+	if (!RTC.begin()) {
 		digitalWrite(ERRLED, HIGH);
 		frequency = 2000;
 #ifdef ECHO_TO_SERIAL 
@@ -269,13 +266,15 @@ void setup() {
 		}
 	}
 
-	RTC.enable32kHz(false); // Stop 32.768kHz output from DS3231 for now
+	RTC.disable32K(); // Stop 32.768kHz output from DS3231 for now
 	
 	// The DS3231 can also put out several different square waves
 	// on its SQW pin (1024, 4096, 8192 Hz), though I don't use them
 	// in this sketch. The code below disables the SQW output to make
 	// sure it's not using any extra power.
-	RTC.enableOscillator(true, false, 0);
+  RTC.writeSqwPinMode(DS3231_OFF); // Square wave output
+  RTC.clearAlarm(1); 
+  RTC.disableAlarm(2);
 
 #ifdef ECHO_TO_SERIAL	
 	// Print time to serial monitor. 
@@ -510,7 +509,7 @@ void loop() {
 				}
 				TIMSK2 = 0; // stop TIMER2 interrupts
 				// Turn off the RTC's 32.768kHz clock signal
-				RTC.enable32kHz(false);
+				RTC.disable32K(); 
 				// Go into low power sleep mode with watchdog timer
 				lowPowerSleep();
 				// From here, f_wdt will be set to 2 on interrupt from the
@@ -530,7 +529,7 @@ void loop() {
 			TIMSK2 = 0; // stop TIMER2 interrupts
 			// If we are past endMinute, enter lowPowerSleep (shuts off TIMER2)
 			// Turn off the RTC's 32.768kHz clock signal
-			RTC.enable32kHz(false);
+			RTC.disable32K(); 
 			// Go into low power sleep mode with watchdog timer
 			// The watchdog interrupt will return f_wdt = 2 after this point
 			lowPowerSleep();
@@ -742,7 +741,8 @@ ISR(WDT_vect) {
 DateTime startTIMER2(DateTime currTime){
 	TIMSK2 = 0; // stop timer 2 interrupts
 
-	RTC.enable32kHz(true);
+	RTC.enable32K();
+  /*
 	ASSR = _BV(EXCLK); // Set EXCLK external clock bit in ASSR register
 	// The EXCLK bit should only be set if you're trying to feed the
 	// 32.768 clock signal from the Chronodot into XTAL1. 
@@ -750,6 +750,9 @@ DateTime startTIMER2(DateTime currTime){
 	ASSR = ASSR | _BV(AS2); // Set the AS2 bit, using | (OR) to avoid
 	// clobbering the EXCLK bit that might already be set. This tells 
 	// TIMER2 to take its clock signal from XTAL1/2
+  */
+  ASSR |= _BV(EXCLK) | _BV(AS2);
+
 	TCCR2A = 0; //override arduino settings, ensure WGM mode 0 (normal mode)
 	
 	// Set up TCCR2B register (Timer Counter Control Register 2 B) to use the 
@@ -774,7 +777,7 @@ DateTime startTIMER2(DateTime currTime){
 #if SAMPLES_PER_SECOND == 1
     TCCR2B = _BV(CS22) | _BV(CS20); // prescaler clk/128 -- TCNT2 will overflow once every 1 seconds
 #endif
-
+  /*
 	// Pause briefly to let the RTC roll over a new second
 	DateTime starttime = currTime;
 	// Cycle in a while loop until the RTC's seconds value updates
@@ -782,10 +785,11 @@ DateTime startTIMER2(DateTime currTime){
 		delay(1);
 		currTime = RTC.now(); // check time again
 	}
+  */
 
 	TCNT2 = 0; // start the timer at zero
 	// wait for the registers to be updated
-	while (ASSR & (_BV(TCN2UB) | _BV(TCR2AUB) | _BV(TCR2BUB))) {} 
+	while (ASSR & (_BV(TCN2UB) | _BV(TCR2AUB) | _BV(TCR2BUB)));
 	TIFR2 = _BV(OCF2B) | _BV(OCF2A) | _BV(TOV2); // clear the interrupt flags
 	TIMSK2 = _BV(TOIE2); // enable the TIMER2 interrupt on overflow
 	// TIMER2 will now create an interrupt every time it rolls over,
@@ -981,7 +985,7 @@ void endRun ()
 	interrupts(); // reenable global interrupts (including TIMER0 for millis)
 
 	// Turn off the RTC's 32.768kHz clock signal if it's not already off
-	RTC.enable32kHz(false);
+	RTC.disable32K();
 	TIMSK2 = 0; // stop timer 2 interrupts
 
 	// Create a final time stamp for the file's modify date
